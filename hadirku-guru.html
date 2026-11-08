@@ -21,6 +21,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 input,select,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%}
 textarea{min-height:70px;resize:vertical}
 label{display:block;font-size:13px;color:var(--mut);margin:12px 0 4px}
+label.chk{display:flex;gap:10px;align-items:center;color:var(--ink);font-size:15px;margin:16px 0 0}
+input[type=checkbox]{width:auto;accent-color:var(--pri)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
 .top{font-size:17px;margin-bottom:6px}
 .it{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
@@ -107,10 +109,15 @@ async function render(){
 async function loadHome(){
   const d=dateStr(),get=()=>q(sb.from('daily_sessions').select(SEL).eq('guru_id',uid).eq('tanggal',d).order('jam_mulai'));
   let rows=await get();
-  if(!rows.length){ // cadangan: buat sesi hari ini dari jadwal sendiri bila belum dibuat
+  { // cadangan: buat sesi hari ini untuk jadwal sendiri yang belum punya sesi
     const iso=new Date(d+'T00:00:00').getDay()||7;
     const sc=await q(sb.from('schedules').select('*').eq('guru_id',uid).eq('hari_id',iso));
-    if(sc.length){await sb.from('daily_sessions').insert(sc.map(s=>({schedule_id:s.id,guru_id:uid,mapel_id:s.mapel_id,kelas_id:s.kelas_id,tanggal:d,jam_mulai:s.jam_mulai,jam_selesai:s.jam_selesai})));rows=await get()}
+    const have=new Set(rows.map(s=>s.schedule_id)),miss=sc.filter(s=>!have.has(s.id));
+    if(miss.length){
+      const r=await sb.from('daily_sessions').upsert(miss.map(s=>({schedule_id:s.id,guru_id:uid,mapel_id:s.mapel_id,kelas_id:s.kelas_id,tanggal:d,jam_mulai:s.jam_mulai,jam_selesai:s.jam_selesai})),{onConflict:'schedule_id,tanggal',ignoreDuplicates:true});
+      if(r.error)toast('Sesi dari jadwal gagal dibuat: '+r.error.message,1);
+      rows=await get();
+    }
   }
   const m={};rows.forEach(s=>{const k=s.jam_mulai+'|'+s.jam_selesai;(m[k]=m[k]||{mulai:s.jam_mulai,selesai:s.jam_selesai,items:[]}).items.push(s)});
   groups=Object.values(m);
@@ -124,6 +131,8 @@ function card(g,i){
   if(ph==='wait')act=`<p class="mut">Pencatatan dibuka pukul ${hm(g.mulai)}.</p>`;
   if(ph==='open')act=`<div class="cd">Sisa waktu mencatat<br><b data-cd="${secs(g.mulai)+win*60}">--:--</b></div><div class="acts"><button data-act="masuk" data-g="${i}">Saya Masuk Kelas</button><button class="ghost" data-act="absen" data-g="${i}">Saya Tidak Masuk</button></div>`;
   if(ph==='late')act='<p class="bad">Waktu pencatatan sudah lewat dan sesi terkunci. Hubungi admin bila perlu koreksi.</p>';
+  if(ph==='done'&&g.items.some(s=>s.status==='terlewat'))act='<p class="bad">Sesi ini terlewat karena tidak dicatat dalam batas waktu dan sudah terkunci. Hubungi admin bila perlu koreksi.</p>';
+  if(js.some(j=>j.diterbitkan))act+='<p class="mut">Tugas ditampilkan ke murid di Portal Murid.</p>';
   if(js.length){const t=Math.min(...js.map(lockAt));act+=Date.now()<t?`<p class="mut">Jurnal bisa diubah sampai pukul ${hhmm(t)}.</p><div class="acts" style="margin-top:8px"><button class="ghost" data-act="ubah" data-g="${i}">Ubah jurnal</button></div>`:'<p class="mut">Jurnal terkunci.</p>'}
   return `<div class="card"><div class="top"><b>${hm(g.mulai)} sampai ${hm(g.selesai)}</b></div>${g.items.map(s=>`<div class="it"><span>${esc(s.kelas.nama_kelas)}, ${esc(s.mapels.nama_mapel)}</span><span class="tag ${s.status}">${STAT[s.status]}</span></div>`).join('')}${act}</div>`;
 }
@@ -155,11 +164,15 @@ function formAbsen(g,i){sheet(`<h2>Saya Tidak Masuk</h2>${list(g)}<form data-for
 <label>Keterangan</label><textarea name="alasan"></textarea>
 <label>Tugas untuk siswa</label><textarea name="tugas"></textarea>
 <label>Foto tugas (maksimal 1)</label><input type="file" name="foto" accept="image/*">
+<label class="chk"><input type="checkbox" name="pub"> Tampilkan tugas dan foto ke murid</label>
+<p class="mut" style="margin:4px 0 0;font-size:13px">Jika dicentang, tugas dan foto tampil di Portal Murid. Kategori alasan dan keterangan tidak pernah tampil. Jangan menulis alasan pribadi di kolom tugas.</p>
 <button style="width:100%;margin-top:14px">Kirim</button></form>`)}
 function formUbah(g,i){const js=g.items.map(jr).filter(Boolean),f=js[0],ab=f.alasan_kategori!=null;
 sheet(`<h2>Ubah jurnal</h2>${list(g)}<form data-form="ubah" data-g="${i}">
 ${ab?`<label>Kategori alasan</label><select name="kat">${kopt(f.alasan_kategori)}</select><label>Keterangan</label><textarea name="alasan">${esc(f.alasan_teks)}</textarea>`:''}
 <label>${ab?'Tugas untuk siswa':'Catatan pembelajaran'}</label><textarea name="tugas">${esc(f.tugas_teks)}</textarea>
+<label class="chk"><input type="checkbox" name="pub"${f.diterbitkan?' checked':''}> Tampilkan ke murid</label>
+<p class="mut" style="margin:4px 0 0;font-size:13px">Jika dicentang, teks${ab?' dan foto':''} di atas tampil di Portal Murid. Kategori alasan dan keterangan tidak pernah tampil.</p>
 <button style="width:100%;margin-top:14px">Simpan perubahan</button></form>`)}
 function shrink(file){return new Promise((ok,no)=>{const im=new Image(),u=URL.createObjectURL(file);
 im.onload=()=>{const s=Math.min(1,1280/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?ok(b):no(new Error('Foto gagal diproses.')),'image/jpeg',.8)};
@@ -194,10 +207,10 @@ async function submit(f){
       for(const s of pend(g)){let path=null;
         if(blob){path=uid+'/'+s.id+'.jpg';const {error}=await sb.storage.from('tugas-foto').upload(path,blob,{contentType:'image/jpeg'});
           if(error&&!/exist|duplicate/i.test(error.message))throw new Error('Foto gagal diunggah: '+error.message)}
-        rows.push({session_id:s.id,guru_id:uid,alasan_kategori:d.kat,alasan_teks:(d.alasan||'').trim()||null,tugas_teks:(d.tugas||'').trim()||null,foto_url:path})}
+        rows.push({session_id:s.id,guru_id:uid,alasan_kategori:d.kat,alasan_teks:(d.alasan||'').trim()||null,tugas_teks:(d.tugas||'').trim()||null,foto_url:path,diterbitkan:!!d.pub})}
       await q(sb.from('journals').insert(rows));toast('Jurnal tersimpan.');
     }else{
-      const up={tugas_teks:(d.tugas||'').trim()||null};if(d.kat){up.alasan_kategori=d.kat;up.alasan_teks=(d.alasan||'').trim()||null}
+      const up={tugas_teks:(d.tugas||'').trim()||null,diterbitkan:!!d.pub};if(d.kat){up.alasan_kategori=d.kat;up.alasan_teks=(d.alasan||'').trim()||null}
       const ids=g.items.map(jr).filter(Boolean).map(j=>j.id),r=await q(sb.from('journals').update(up).in('id',ids).select());
       if(!r.length)throw new Error('Batas 60 menit sudah lewat, jurnal terkunci.');toast('Perubahan tersimpan.');
     }
