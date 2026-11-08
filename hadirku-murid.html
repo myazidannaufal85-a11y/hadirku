@@ -52,40 +52,45 @@ h2{font-size:15px;margin:18px 0 8px}
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script>
-const TZ='Asia/Makassar',KEY='hadirku_murid',HARI=['','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'];
-let sb,kelas=[],S={reg:'',pem:[]},tab='hari',tgl='';
+const TZ='Asia/Makassar',KEY='hadirku_murid2',HARI=['','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'];
+let sb,kelas=[],pemList=[],S={reg:'',pem:[]},tab='hari',tgl='';
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const hm=t=>String(t).slice(0,5);
 const dstr=n=>new Date(Date.now()-n*864e5).toLocaleDateString('en-CA',{timeZone:TZ});
-const tingkat=k=>k.nama_kelas.split('-')[0];
+const nm=id=>(kelas.find(k=>k.id===id)||{}).nama_kelas||'';
+const pn=id=>(pemList.find(m=>m.id===id)||{}).nama_mapel||'';
+const lbl=x=>x.jenis==='peminatan'?'Peminatan, ruang '+esc(x.nama_kelas):'Reguler';
 function toast(m){const t=$('#toast');t.textContent=m;t.className='show';clearTimeout(toast.t);toast.t=setTimeout(()=>t.className='',3600)}
 async function q(p){const r=await p;if(r.error)throw r.error;return r.data}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 
-/* ---------- Pilih kelas ---------- */
+/* ---------- Pilih kelas dan mapel peminatan ---------- */
+async function loadPem(){
+  pemList=[];if(!S.reg)return;
+  try{pemList=await q(sb.rpc('portal_mapel_peminatan',{p_reguler:S.reg}))}catch(e){toast('Daftar mapel peminatan belum dapat dimuat.')}
+  S.pem=S.pem.filter(id=>pemList.some(m=>m.id===id));
+}
 function pick(){
-  const reg=kelas.filter(k=>k.jenis==='reguler');
   $('#view').innerHTML=`<h2>Pilih kelas Anda</h2><label>Kelas reguler</label>
-  <select id="reg"><option value="">Pilih kelas</option>${reg.map(k=>`<option value="${k.id}"${k.id===S.reg?' selected':''}>${esc(k.nama_kelas)}</option>`).join('')}</select>
+  <select id="reg"><option value="">Pilih kelas</option>${kelas.map(k=>`<option value="${k.id}"${k.id===S.reg?' selected':''}>${esc(k.nama_kelas)}</option>`).join('')}</select>
   <div id="pem"></div>
   <button data-act="simpan" style="width:100%;margin-top:18px">Lihat jadwal</button>
   <p class="foot">Pilihan kelas hanya untuk menampilkan jadwal dan bukan tanda pengenal.</p>`;
-  drawPem();
+  $('#pem').innerHTML=S.reg?'<p class="mut">Memuat mapel peminatan…</p>':'';
+  loadPem().then(drawPem);
 }
 function drawPem(){
-  const rk=kelas.find(k=>k.id===$('#reg').value);
-  const list=rk?kelas.filter(k=>k.jenis==='peminatan'&&tingkat(k)===tingkat(rk)):[];
-  $('#pem').innerHTML=!rk?'':list.length
-    ?`<label>Kelompok peminatan Anda (maksimal 4)</label>`+list.map(k=>`<label class="chk"><input type="checkbox" value="${k.id}"${S.pem.includes(k.id)?' checked':''}> ${esc(k.nama_kelas)}</label>`).join('')
-    :'<p class="mut">Kelas ini tidak memiliki kelompok peminatan.</p>';
+  $('#pem').innerHTML=!S.reg?'':pemList.length
+    ?`<label>Mapel peminatan Anda (maksimal 4)</label>`+pemList.map(m=>`<label class="chk"><input type="checkbox" value="${m.id}"${S.pem.includes(m.id)?' checked':''}><span>${esc(m.nama_mapel)}<br><span class="mut">${esc(m.nama_guru)}</span></span></label>`).join('')
+    :'<p class="mut">Belum ada mapel peminatan untuk tingkat ini.</p>';
 }
 
 /* ---------- Jadwal ---------- */
 const stClass=s=>s==='Guru hadir'?'ok':s==='Guru berhalangan hadir'?'warn':'';
-const nm=id=>(kelas.find(k=>k.id===id)||{}).nama_kelas||'';
 function home(){
-  const names=[nm(S.reg)].concat(S.pem.map(nm)).filter(Boolean);
-  $('#view').innerHTML=`<div class="who"><div><b>${esc(nm(S.reg))}</b><br><span class="mut">${S.pem.length?esc(names.slice(1).join(', ')):'Tanpa kelompok peminatan'}</span></div><button class="ghost" data-act="ganti">Ganti kelas</button></div>
+  const names=S.pem.map(pn).filter(Boolean);
+  $('#view').innerHTML=`<div class="who"><div><b>${esc(nm(S.reg))}</b><br><span class="mut">${names.length?esc(names.join(', ')):'Tanpa mapel peminatan'}</span></div><button class="ghost" data-act="ganti">Ganti kelas</button></div>
   <nav><button data-tab="hari" class="${tab==='hari'?'on':''}">Per hari</button><button data-tab="minggu" class="${tab==='minggu'?'on':''}">Mingguan</button></nav>
   <div id="isi"><p class="empty">Memuat…</p></div>
   <p class="foot">Informasi berasal dari jurnal guru dan dapat berubah sewaktu-waktu.</p>`;
@@ -94,19 +99,18 @@ function home(){
 async function hari(){
   const d=await q(sb.rpc('portal_jadwal',{p_reguler:S.reg,p_peminatan:S.pem,p_tanggal:tgl}));
   $('#isi').innerHTML=`<label style="margin-top:0">Tanggal</label><input type="date" id="tgl" value="${tgl}" min="${dstr(7)}" max="${dstr(0)}">
-  <div style="margin-top:12px">${d.map(x=>`<div class="card"><div class="row"><div><span class="jam">${hm(x.jam_mulai)} sampai ${hm(x.jam_selesai)}</span><br><b>${esc(x.nama_mapel)}</b><br><span class="mut">${esc(x.nama_guru)}<span class="jenis">${x.jenis==='peminatan'?'Peminatan':'Reguler'}</span></span></div><span class="tag ${stClass(x.status_netral)}">${esc(x.status_netral)}</span></div>
+  <div style="margin-top:12px">${d.map(x=>`<div class="card"><div class="row"><div><span class="jam">${hm(x.jam_mulai)} sampai ${hm(x.jam_selesai)}</span><br><b>${esc(x.nama_mapel)}</b><br><span class="mut">${esc(x.nama_guru)}<span class="jenis">${lbl(x)}</span></span></div><span class="tag ${stClass(x.status_netral)}">${esc(x.status_netral)}</span></div>
   ${x.catatan||x.foto_path?`<div class="tugas"><b>Tugas dari guru</b>${esc(x.catatan||'')}${x.foto_path?`<br><button class="ghost" data-act="foto" data-p="${esc(x.foto_path)}">Lihat foto tugas</button>`:''}</div>`:''}</div>`).join('')||'<p class="empty">Tidak ada pelajaran pada tanggal ini.</p>'}</div>`;
 }
 async function minggu(){
   const d=await q(sb.rpc('portal_jadwal_mingguan',{p_reguler:S.reg,p_peminatan:S.pem}));
   let h='',last=0;
   d.forEach(x=>{if(x.hari_id!==last){last=x.hari_id;h+=`<h2>${HARI[x.hari_id]}</h2>`}
-    h+=`<div class="card"><div class="row"><div><span class="jam">${hm(x.jam_mulai)} sampai ${hm(x.jam_selesai)}</span><br><b>${esc(x.nama_mapel)}</b><br><span class="mut">${esc(x.nama_guru)}<span class="jenis">${esc(x.nama_kelas)}</span></span></div></div></div>`});
+    h+=`<div class="card"><div class="row"><div><span class="jam">${hm(x.jam_mulai)} sampai ${hm(x.jam_selesai)}</span><br><b>${esc(x.nama_mapel)}</b><br><span class="mut">${esc(x.nama_guru)}<span class="jenis">${lbl(x)}</span></span></div></div></div>`});
   $('#isi').innerHTML=h||'<p class="empty">Jadwal mingguan belum tersedia.</p>';
 }
 
 /* ---------- Aksi ---------- */
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 document.addEventListener('click',async e=>{
   const t=e.target.closest('[data-tab]');if(t){tab=t.dataset.tab;return home()}
   const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
@@ -120,9 +124,9 @@ document.addEventListener('click',async e=>{
     $('#ov').innerHTML=`<div class="ovb"><img src="${esc(data.signedUrl)}" alt="Foto tugas"><br><button data-act="tutup">Tutup</button></div>`;$('#ov').hidden=false}
 });
 document.addEventListener('change',e=>{
-  if(e.target.id==='reg'){S.pem=[];return drawPem()}
+  if(e.target.id==='reg'){S={reg:e.target.value,pem:[]};$('#pem').innerHTML=S.reg?'<p class="mut">Memuat mapel peminatan…</p>':'';return loadPem().then(drawPem)}
   if(e.target.id==='tgl'&&e.target.value){tgl=e.target.value;return hari().catch(()=>{})}
-  if(e.target.matches('#pem input')&&document.querySelectorAll('#pem input:checked').length>4){e.target.checked=false;toast('Maksimal 4 kelompok peminatan.')}
+  if(e.target.matches('#pem input')&&document.querySelectorAll('#pem input:checked').length>4){e.target.checked=false;toast('Maksimal 4 mapel peminatan.')}
 });
 
 async function boot(){
@@ -130,11 +134,11 @@ async function boot(){
   if(!c||!c.url||!c.key){$('#view').innerHTML='<p class="empty">Portal belum dikonfigurasi. Hubungi admin sekolah.</p>';return}
   sb=supabase.createClient(c.url,c.key,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
   try{
-    kelas=await q(sb.rpc('portal_kelas'));
+    kelas=(await q(sb.rpc('portal_kelas'))).filter(k=>k.jenis==='reguler');
     const n=await sb.rpc('portal_nama_sekolah');if(n.data)$('#sch').textContent=n.data;
   }catch(e){$('#view').innerHTML='<p class="empty">Data belum dapat dimuat. Coba lagi nanti.</p>';return}
   try{const s=JSON.parse(localStorage.getItem(KEY)||'null');
-    if(s&&kelas.some(k=>k.id===s.reg&&k.jenis==='reguler')&&Array.isArray(s.pem)&&s.pem.every(i=>kelas.some(k=>k.id===i&&k.jenis==='peminatan'))){S=s;tgl=dstr(0);return home()}}catch(e){}
+    if(s&&kelas.some(k=>k.id===s.reg)&&Array.isArray(s.pem)){S={reg:s.reg,pem:s.pem};await loadPem();tgl=dstr(0);return home()}}catch(e){}
   pick();
 }
 boot();
